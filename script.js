@@ -1,6 +1,17 @@
 const SERVICE_KEY = "45dd6772b86a0a8c153347fcff4f16f6df199aabbd2a4dd7bada3f3fa1739314";
 const BASE_URL = "https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoServcPPSSrch";
-const DEFAULT_KEYWORDS = ["로컬", "문화", "연구", "청년", "창업", "지역", "상권", "기본계획", "운영", "활성화"];
+const DEFAULT_KEYWORDS = [
+  "로컬",
+  "문화",
+  "연구",
+  "청년",
+  "창업",
+  "지역",
+  "상권",
+  "기본계획",
+  "운영",
+  "활성화",
+];
 const REGION_ALLOWED = ["서울", "경기", "전국"];
 
 const state = {
