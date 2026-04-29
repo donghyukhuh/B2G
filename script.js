@@ -1,110 +1,107 @@
-const SERVICE_KEY = "45dd6772b86a0a8c153347fcff4f16f6df199aabbd2a4dd7bada3f3fa1739314";
-const BASE_URL = "https://apis.data.go.kr/1230000/BidPublicInfoService/getBidPblancListInfoServcPPSSrch";
-const DEFAULT_KEYWORDS = ["로컬", "문화", "연구", "청년", "창업", "지역", "상권", "기본계획", "운영", "활성화"];
-const REGION_ALLOWED = ["서울", "경기", "전국"];
+/**
+ * script.js
+ * GitHub Pages 프론트엔드.
+ * API를 직접 호출하지 않고, GitHub Actions가 생성한
+ * data/bids.json 을 fetch해서 렌더링합니다.
+ */
 
+// ── 상수 ──────────────────────────────────────────────────
+const DEFAULT_KEYWORDS = [
+  "로컬", "문화", "연구", "청년", "창업",
+  "지역", "상권", "기본계획", "운영", "활성화",
+];
+const DATA_URL = "data/bids.json";
+
+// ── 상태 ──────────────────────────────────────────────────
 const state = {
   keywords: loadKeywords(),
+  allData: {},   // { keyword: [rows] }
 };
 
-const keywordInput = document.getElementById("keywordInput");
+// ── DOM 참조 ──────────────────────────────────────────────
+const keywordInput  = document.getElementById("keywordInput");
 const addKeywordBtn = document.getElementById("addKeywordBtn");
-const refreshBtn = document.getElementById("refreshBtn");
-const keywordChips = document.getElementById("keywordChips");
-const results = document.getElementById("results");
-const lastUpdated = document.getElementById("lastUpdated");
+const refreshBtn    = document.getElementById("refreshBtn");
+const keywordChips  = document.getElementById("keywordChips");
+const results       = document.getElementById("results");
+const lastUpdated   = document.getElementById("lastUpdated");
+const statusBadge   = document.getElementById("statusBadge");
 
+// ── 키워드 저장/불러오기 ──────────────────────────────────
 function loadKeywords() {
-  const raw = localStorage.getItem("nara_keywords");
-  if (!raw) return [...DEFAULT_KEYWORDS];
-  try { return JSON.parse(raw); } catch { return [...DEFAULT_KEYWORDS]; }
+  try {
+    const raw = localStorage.getItem("nara_keywords");
+    return raw ? JSON.parse(raw) : [...DEFAULT_KEYWORDS];
+  } catch {
+    return [...DEFAULT_KEYWORDS];
+  }
 }
 
 function saveKeywords() {
   localStorage.setItem("nara_keywords", JSON.stringify(state.keywords));
 }
 
+// ── 키워드 칩 렌더 ────────────────────────────────────────
 function renderChips() {
   keywordChips.innerHTML = "";
   state.keywords.forEach((kw) => {
     const chip = document.createElement("div");
     chip.className = "chip";
-    chip.innerHTML = `<span>${kw}</span>`;
+
+    const label = document.createElement("span");
+    label.textContent = kw;
+
+    // 해당 키워드가 수집 데이터에 없으면 경고 표시
+    if (state.allData && !(kw in state.allData)) {
+      label.title = "이 키워드는 자동 수집 대상이 아닙니다.\ndata/keywords.json에 추가하면 다음 갱신 시 포함됩니다.";
+      label.style.opacity = "0.6";
+    }
 
     const del = document.createElement("button");
     del.className = "del";
     del.textContent = "✕";
+    del.setAttribute("aria-label", `${kw} 삭제`);
     del.onclick = () => {
       state.keywords = state.keywords.filter((k) => k !== kw);
       saveKeywords();
       renderChips();
-      refreshAll();
+      renderResults();
     };
 
+    chip.appendChild(label);
     chip.appendChild(del);
     keywordChips.appendChild(chip);
   });
 }
 
-function toMoney(v) {
-  const n = Number(v || 0);
-  if (!n) return "-";
-  return n.toLocaleString("ko-KR") + "원";
+// ── 결과 렌더 ─────────────────────────────────────────────
+function renderResults() {
+  const frag = document.createDocumentFragment();
+
+  for (const kw of state.keywords) {
+    const rows = state.allData[kw];
+    frag.appendChild(renderSection(kw, rows));
+  }
+
+  results.innerHTML = "";
+  results.appendChild(frag);
 }
 
-function isRegionAllowed(item) {
-  const txt = `${item.rgstTyNm || ""} ${item.dminsttNm || ""} ${item.ntceInsttNm || ""} ${item.bidNtceNm || ""}`;
-  return REGION_ALLOWED.some((r) => txt.includes(r));
-}
-
-async function fetchKeyword(keyword) {
-  const today = new Date();
-  const start = new Date(today.getTime() - 1000 * 60 * 60 * 24 * 30);
-  const fmt = (d) => d.toISOString().slice(0, 10).replaceAll("-", "");
-
-  const url = new URL(BASE_URL);
-  url.searchParams.set("serviceKey", SERVICE_KEY);
-  url.searchParams.set("numOfRows", "100");
-  url.searchParams.set("pageNo", "1");
-  url.searchParams.set("type", "json");
-  url.searchParams.set("inqryDiv", "1");
-  url.searchParams.set("inqryBgnDt", fmt(start));
-  url.searchParams.set("inqryEndDt", fmt(today));
-  url.searchParams.set("bidNtceNm", keyword);
-
-  const resp = await fetch(url.toString());
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = await resp.json();
-  const items = data?.response?.body?.items;
-
-  if (!items) return [];
-  const rows = Array.isArray(items) ? items : items.item || [];
-  const normalized = Array.isArray(rows) ? rows : [rows];
-
-  return normalized
-    .filter((it) => isRegionAllowed(it))
-    .slice(0, 10)
-    .map((it) => ({
-      title: it.bidNtceNm || "-",
-      amount: toMoney(it.asignBdgtAmt || it.presmptPrce),
-      org: it.ntceInsttNm || it.dminsttNm || "-",
-      due: it.bidClseDt || "-",
-      fileUrl: it.ntceSpecDocUrl1 || it.ntceSpecDocUrl2 || it.ntceSpecDocUrl3 || "",
-    }));
-}
-
-function renderTable(keyword, rows, error = "") {
+function renderSection(keyword, rows) {
   const section = document.createElement("section");
+
   const title = document.createElement("h3");
   title.className = "keyword-title";
   title.textContent = `키워드: ${keyword}`;
   section.appendChild(title);
 
-  if (error) {
-    const p = document.createElement("p");
-    p.className = "small";
-    p.textContent = `조회 실패: ${error}`;
-    section.appendChild(p);
+  // 수집 대상 아닌 키워드 안내
+  if (!rows) {
+    const notice = document.createElement("p");
+    notice.className = "small warn";
+    notice.textContent =
+      "이 키워드는 자동 수집 대상이 아닙니다. data/keywords.json에 추가 후 Actions를 실행하세요.";
+    section.appendChild(notice);
     return section;
   }
 
@@ -115,19 +112,34 @@ function renderTable(keyword, rows, error = "") {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>공고명</th><th>금액</th><th>공고기관</th><th>입찰마감일시</th><th>파일첨부문서</th>
+        <th>공고명</th>
+        <th>금액</th>
+        <th>공고기관</th>
+        <th>입찰마감일시</th>
+        <th>첨부문서</th>
       </tr>
     </thead>
     <tbody>
-      ${rows.length ? rows.map(r => `
+      ${
+        rows.length
+          ? rows
+              .map(
+                (r) => `
         <tr>
-          <td>${r.title}</td>
-          <td>${r.amount}</td>
-          <td>${r.org}</td>
-          <td>${r.due}</td>
-          <td>${r.fileUrl ? `<a href="${r.fileUrl}" target="_blank" rel="noopener">다운로드</a>` : "-"}</td>
-        </tr>
-      `).join("") : `<tr><td colspan="5">검색 결과 없음</td></tr>`}
+          <td>${escHtml(r.title)}</td>
+          <td>${escHtml(r.amount)}</td>
+          <td>${escHtml(r.org)}</td>
+          <td>${escHtml(r.due)}</td>
+          <td>${
+            r.fileUrl
+              ? `<a href="${escHtml(r.fileUrl)}" target="_blank" rel="noopener noreferrer">다운로드</a>`
+              : "-"
+          }</td>
+        </tr>`
+              )
+              .join("")
+          : `<tr><td colspan="5" style="text-align:center;color:#888">검색 결과 없음</td></tr>`
+      }
     </tbody>
   `;
 
@@ -136,24 +148,59 @@ function renderTable(keyword, rows, error = "") {
   return section;
 }
 
-async function refreshAll() {
-  results.innerHTML = "조회 중...";
-  const frag = document.createDocumentFragment();
-
-  for (const kw of state.keywords) {
-    try {
-      const rows = await fetchKeyword(kw);
-      frag.appendChild(renderTable(kw, rows));
-    } catch (e) {
-      frag.appendChild(renderTable(kw, [], e.message));
-    }
-  }
-
-  results.innerHTML = "";
-  results.appendChild(frag);
-  lastUpdated.textContent = `최근 갱신: ${new Date().toLocaleString("ko-KR")}`;
+function escHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
+// ── 데이터 로드 ───────────────────────────────────────────
+async function loadData() {
+  setStatus("loading");
+  results.innerHTML = `<p class="small" style="padding:8px">데이터를 불러오는 중…</p>`;
+
+  try {
+    // 캐시 방지: ?t=타임스탬프
+    const resp = await fetch(`${DATA_URL}?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const json = await resp.json();
+    state.allData = json.results || {};
+
+    const updatedAt = json.updatedAt
+      ? new Date(json.updatedAt).toLocaleString("ko-KR")
+      : "-";
+    lastUpdated.textContent = `최근 갱신: ${updatedAt}`;
+
+    renderChips();  // 수집 여부 반영
+    renderResults();
+    setStatus("ok");
+  } catch (e) {
+    results.innerHTML = `
+      <p class="small warn" style="padding:8px">
+        ⚠ data/bids.json 로드 실패: ${e.message}<br>
+        GitHub Actions가 아직 실행되지 않았거나, Actions 실행 중일 수 있습니다.
+        잠시 후 새로고침하거나 Actions 탭에서 수동 실행하세요.
+      </p>`;
+    setStatus("error");
+  }
+}
+
+function setStatus(s) {
+  if (!statusBadge) return;
+  const map = {
+    loading: ["로딩 중…",  "#f59e0b"],
+    ok:      ["정상",       "#22c55e"],
+    error:   ["오류",       "#ef4444"],
+  };
+  const [text, color] = map[s] || ["", ""];
+  statusBadge.textContent = text;
+  statusBadge.style.background = color;
+}
+
+// ── 이벤트 ────────────────────────────────────────────────
 addKeywordBtn.onclick = () => {
   const kw = keywordInput.value.trim();
   if (!kw || state.keywords.includes(kw)) return;
@@ -161,11 +208,16 @@ addKeywordBtn.onclick = () => {
   keywordInput.value = "";
   saveKeywords();
   renderChips();
-  refreshAll();
+  renderResults();
 };
 
-refreshBtn.onclick = refreshAll;
+keywordInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addKeywordBtn.click();
+});
 
-renderChips();
-refreshAll();
-setInterval(refreshAll, 60000);
+refreshBtn.onclick = loadData;
+
+// ── 초기 실행 ─────────────────────────────────────────────
+loadData();
+// 5분마다 자동 갱신 (Actions가 실행된 경우 반영)
+setInterval(loadData, 5 * 60 * 1000);
